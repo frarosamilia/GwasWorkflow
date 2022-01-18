@@ -1,0 +1,129 @@
+#definisco una funzione per due file: 
+#len(file1.columns) = recuperare a livello di codice il numero di colonne in un dataframe
+#replace sostituisce i campi per inserire gli spazi 
+#ci interessano quelle determinate *colonne* da inserire in quelle *posizioni*
+#for numeri in range(3): 
+#.insert: ti inserisce la funzione numeri in quelle posizioni con quelle colonne in base alla colonna Probe Set ID della funzione .map del file2
+
+def lavoro (file1,file2):
+    file1.iloc[:,1:len(file1.columns)].replace({'AA':'A A','AB':'A B','BB':'B B','NN': '0 0'}, inplace=True) 
+    colonne = ['Chromosome','Genetic Distance','Physical Position']
+    posizioni = [0,2,3]
+    for numeri in range(3):
+        file1.insert(posizioni[numeri],colonne[numeri],file1['Probe Set ID'].map(file2.set_index('Probe Set ID')[colonne[numeri]]))
+
+#definisco funzione per cancellare le righe del file 1 e del file 2 che abbiano '---' della colonna Chromosome
+def cancella_riga (file1,file2):
+    indexNames= file1 [file1['Chromosome'] == '---' ].index
+    file1.drop(indexNames, inplace=True)
+    indexNames= file2 [file2['Chromosome'] == '---' ].index
+    file2.drop(indexNames, inplace=True)
+
+#questo che segue deve far parte delle funzioni precedenti: 
+#importo le librerie e i file su cui lavorare
+#con lavoro invece definisco su che file deve lavorare la funzione, sia per lavoro che per cancella riga    
+import os
+import pandas as pd
+df1=pd.read_csv('nsp_originale_pronto.csv',sep=';')
+df2=pd.read_csv('Mapping_nsp_originale_pronto.csv',sep=';',dtype='unicode') 
+df3=pd.read_csv('sty_originale_pronto.csv',sep=';') 
+df4=pd.read_csv('Mapping_sty_originale_pronto.csv',sep=';',dtype='unicode')
+lavoro(df1,df2)
+lavoro(df3,df4)
+cancella_riga(df1,df3)
+
+
+#esporto i file che ho creato come txt
+df1.to_csv('df1_forplink.txt',index=False,sep='\t',mode='w')
+df3.to_csv('df3_forplink.txt',index=False,sep='\t',mode='w')
+
+#cambio estensione tped per file df1_forplink.txt e df3_forplink.txt. Recupero per entrambi i pool di pazienti i file fam da rinominare tfam e creo il file bed con plink
+#passo a plink
+plink --tfile df1_forplink_tpedtfam --make-bed --out df1_plink_bed
+plink --tfile df3_forplink_tpedtfam --make-bed --out df3_plink_bed 
+
+#creo file a partire dal df2 solo con colonne che mi interessano (0[probe set id], 9[se nucleotide A], 10[se nucleotide B]). Aggiungo due colonne in pos 1 e 2 con valori rispettivi di A e B, per avere file di questo tipo: 'sonda  A   B   A   G'
+df_fin1=df2.iloc[:,[0,9,10]]
+df_fin1.insert(1, "A", 'A', allow_duplicates=False)
+df_fin1.insert(2, "B", 'B', allow_duplicates=False)
+
+#creo file a partire dal df4 solo con colonne che mi interessano (0[probe set id], 9[se nucleotide A], 10[se nucleotide B]). Aggiungo due colonne in pos 1 e 2 con valori rispettivi di A e B, per avere file di questo tipo: 'sonda  A   B   A   G'df_fin2=df4.iloc[:,[0,9,10]]
+df_fin2.insert(1, "A", 'A', allow_duplicates=False)
+df_fin2.insert(2, "B", 'B', allow_duplicates=False)
+
+#esporto file appena creati che servono per decodifica alleli su plink 
+df_fin.to_csv('nsp_decode_alleles.txt',index=False,header=False,sep='\t',mode='w')
+df_fin2.to_csv('sty_decode_alleles.txt',index=False,header=False,sep='\t',mode='w')
+
+#passo a plink e con file decode_alleles creo alleles_nsp o alleles_sty in formato ATGC
+
+plink --bfile df1_plink_bed --update-alleles nsp_decode_alleles.txt --make-bed --out alleles_nsp
+plink --bfile df3_plink_bed --update-alleles sty_decode_alleles.txt --make-bed --out alleles_sty
+
+#creo file tenendo solo i record con strand positivo
+df2_strandpos=(df2.loc[df2['Strand'] == '+'])
+df4_strandpos=(df4.loc[df4['Strand'] == '+'])
+
+#esporto file appena creati che servono per funzione flip su plink
+df2_strandpos.to_csv('nsp_strandpos.txt',index=False,header=False,sep='\t',mode='w')
+df4_strandpos.to_csv('sty_strandpos.txt',index=False,header=False,sep='\t',mode='w')
+
+#passo a plink per funzione flip, che unisce file alleli in formato ATGC con il corrispettivo strand in base alla Probe Set ID
+plink --bfile alleles_nsp --flip nsp_strandpos_plink.txt --make-bed --out alleles_nsp+
+plink --bfile alleles_sty --flip sty_strandpos_plink.txt --make-bed --out alleles_sty+
+
+#creo file a partire dal df2 o df4 solo con colonne che mi interessano (probe set id, dbSNP RS ID). Utili per aggiornare gli alleli e l'rs number in contig 19 o 36
+df2_nsp_rsnumber=df2.loc[:, ['Probe Set ID', 'dbSNP RS ID']]
+df4_sty_rsnumber=df4.loc[:, ['Probe Set ID', 'dbSNP RS ID']]
+
+#esporto file appena creati che servono per funzione updatemap su plink
+df2_nsp_rsnumber.to_csv('df2_nsp_rsnumber.txt',index=False,header=False,sep='\t',mode='w')
+df4_sty_rsnumber.to_csv('df4_sty_rsnumber.txt',index=False,header=False,sep='\t',mode='w')
+
+#passo a plink per funzione updatemap
+plink --bfile alleles_nsp+ --update-map df2_nsp_rsnumber.txt --update-name --make-bed --out alleles_nsp_+rs
+plink --bfile alleles_sty+ --update-map df4_sty_rsnumber.txt --update-name --make-bed --out alleles_sty_+rs
+
+#scarico da dbSNP le ref dell'hg19. Con funzione head identifico le righe dell'header da cancellare. una volta identificate proseguo su UNIX
+tail +155 hg19-v0-Homo_sapiens_assembly19.dbsnp138.vcf >hg19_pulito
+
+#sempre da UNIX, perché file ancora troppo grosso, seleziono colonne: rsnumber e physical position nel file che chiamerò rsnumber_posizioni_hg19.txt e colonne:rsnumber e chromosome nel file che chiamerò rsnumber_cromosomi_hg19.txt
+tail -n + 155 hg19-v0-Homo_sapiens_assembly19.dbsnp138.vcf | awk '{print $3 "\t"$2}' > rsnumber_posizioni_hg19.txt
+tail -n + 155 hg19-v0-Homo_sapiens_assembly19.dbsnp138.vcf | awk '{print $3 "\t"$1}' > rsnumber_cromosomi_hg19.txt
+
+#passo a plink e aggiorno i file generati prima sia per nsp sia per sty con l'rsnumber usando prima il file con rsnumer e rispettive posizioni aggiornate all'hg19
+plink --bfile alleles_nsp_+rs--update-map rsnumber_posizioni_hg19.txt--make-bed --out alleles_nsp_hg19_temp 
+plink --bfile alleles_sty_+rs --update-map rsnumber_posizioni_hg19.txt --make-bed --out alleles_sty_hg19_temp 
+
+#Poi quelle con gli rs number e i rispettivi chr aggiornati 
+plink --bfile alleles_nsp_hg19_temp --update-map rsnumber_cromosomi_hg19.txt --update-chr --make-bed --out nsp_aggiornato_hg19
+plink --bfile alleles_sty_hg19_temp --update-map rsnumber_cromosomi_hg19.txt --update-chr --make-bed --out sty_aggiornato_hg19
+
+#Unisco sty e nsp con plink
+plink --bfile nsp_aggiornato_hg19 --bmerge sty_aggiornato_hg19.bed sty_aggiornato_hg19.bim sty_aggiornato_hg19.fam --merge-mode 6 --make-bed --out merge_mode6_sty_nsp_hg19_all
+plink --bfile nsp_aggiornato_hg19 --bmerge sty_aggiornato_hg19.bed sty_aggiornato_hg19.bim sty_aggiornato_hg19.fam --make-bed --out merge_default_sty_nsp_hg19_all
+
+#con merge mode 6 il Total genotyping rate è 0.964477. Mentre con merge default il Total genotyping rate é 0.553357.
+
+#esporto in vcf
+plink --bfile merge_mode6_sty_nsp_hg19 --recode vcf --out merge_mode6_sty_nsp_hg19_all_vcf
+
+#beagle:lavora cromosoma per cromodoma, quindi estrapolo da plink solo cromosoma 19 e inizio a fare imputation su quello essendo non troppo grosso
+plink --bfile merge6 --chr 19 --make-bed --out merge_mode6_sty_nsp_hg19_chr19
+
+#esporto in vcf
+plink --bfile merge_mode6_sty_nsp_hg19_chr19 --recode vcf --out merge_mode6_sty_nsp_hg19_chr19_vcf
+
+
+#beagle
+java -Xmx51200m -jar beagle.28Jun21.220.jar
+  gt=merge_mode6_sty_nsp_hg19_chr19_vcf
+  ref=chr19.1kg.phase3.v5a.vcf
+  chrom=19
+  map=plink.chr19.GRCh37.map
+  out=imputed_chr19_temp
+
+
+
+
+
