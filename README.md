@@ -1,2 +1,2 @@
 # GwasWorkflow
-How to manage through Python SNP array data
+How to manage SNP array data through Python workflow
